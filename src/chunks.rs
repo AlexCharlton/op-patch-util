@@ -1,6 +1,7 @@
 use crate::util::*;
-use std::io::BufReader;
-use std::io::{Read, Seek};
+
+use log;
+use std::io::{Cursor, Read, Seek, SeekFrom};
 
 pub type ChunkID = [u8; 4];
 
@@ -22,8 +23,13 @@ pub const ANNOTATION: &ChunkID = b"ANNO";
 pub const AIFF_C: &ChunkID = b"AIFC";
 pub const FORMAT_VER: &ChunkID = b"FVER";
 
-pub fn read_aif(file: impl Read + Seek) -> Result<FormChunk, ChunkError> {
-    FormChunk::parse(&mut BufReader::new(file))
+pub type Buffer<'a> = &'a mut Cursor<Vec<u8>>;
+
+pub fn read_aif(file: &mut (impl Read + Seek)) -> Result<FormChunk, ChunkError> {
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer).unwrap();
+    let mut cursor = Cursor::new(buffer);
+    FormChunk::parse(&mut cursor)
 }
 
 #[derive(Debug)]
@@ -35,7 +41,7 @@ pub enum ChunkError {
 }
 
 pub trait Chunk {
-    fn parse(buffer: &mut BufReader<impl Read + Seek>) -> Result<Self, ChunkError>
+    fn parse(buffer: Buffer) -> Result<Self, ChunkError>
     where
         Self: Sized;
 }
@@ -55,14 +61,14 @@ pub struct FormChunk {
 }
 
 impl Chunk for FormChunk {
-    fn parse(buf: &mut BufReader<impl Read + Seek>) -> Result<FormChunk, ChunkError> {
+    fn parse(buf: Buffer) -> Result<FormChunk, ChunkError> {
         let id = read_chunk_id(buf);
         if &id != FORM {
             return Err(ChunkError::InvalidID(id));
         }
 
         let size = read_i32_be(buf);
-        println!("form chunk bytes {}", size);
+        log::info!("form chunk bytes {}", size);
         let mut form_type = [0; 4];
         buf.read_exact(&mut form_type).unwrap();
         match &form_type {
@@ -142,7 +148,7 @@ pub struct CommonChunk {
 }
 
 impl Chunk for CommonChunk {
-    fn parse(buf: &mut BufReader<impl Read>) -> Result<CommonChunk, ChunkError> {
+    fn parse(buf: Buffer) -> Result<CommonChunk, ChunkError> {
         let (size, num_channels, num_sample_frames, bit_rate) = (
             read_i32_be(buf),
             read_i16_be(buf),
@@ -181,21 +187,21 @@ impl std::fmt::Debug for SoundDataChunk {
 }
 
 impl Chunk for SoundDataChunk {
-    fn parse(buf: &mut BufReader<impl Read>) -> Result<SoundDataChunk, ChunkError> {
+    fn parse(buf: Buffer) -> Result<SoundDataChunk, ChunkError> {
         let size = read_i32_be(buf);
         let offset = read_u32_be(buf);
         let block_size = read_u32_be(buf);
 
-        // TODO some sort of streaming read optimization?
-        let sound_size = size - 8; // account for offset + block size bytes
-        let mut sound_data = vec![0u8; sound_size as usize];
+        let mut sound_data = vec![0u8; size as usize];
 
-        // buf.read_exact(&mut sound_data).unwrap();
-        let got_size = buf.read(&mut sound_data).unwrap();
-        dbg!(size, offset, block_size, got_size);
+        let got_size = buf.read(&mut sound_data).unwrap() as i32;
+        if size != got_size {
+            log::warn!("Expected sound chunk of size {}, got {}", size, got_size);
+            dbg!(size, offset, block_size, got_size);
+        }
 
         Ok(SoundDataChunk {
-            size,
+            size: got_size,
             offset,
             block_size,
             sound_data,
@@ -234,7 +240,7 @@ pub struct MarkerChunk {
 }
 
 impl Chunk for MarkerChunk {
-    fn parse(buf: &mut BufReader<impl Read>) -> Result<MarkerChunk, ChunkError> {
+    fn parse(buf: Buffer) -> Result<MarkerChunk, ChunkError> {
         let size = read_i32_be(buf);
         let num_markers = read_u16_be(buf);
         let mut markers = Vec::with_capacity(num_markers as usize);
@@ -268,8 +274,8 @@ pub struct TextChunk {
 }
 
 impl Chunk for TextChunk {
-    fn parse(buf: &mut BufReader<impl Read + Seek>) -> Result<TextChunk, ChunkError> {
-        buf.seek_relative(-4).unwrap();
+    fn parse(buf: Buffer) -> Result<TextChunk, ChunkError> {
+        buf.seek(SeekFrom::Current(-4)).unwrap();
         let id = read_chunk_id(buf);
         let chunk_type = match &id {
             NAME => TextChunkType::Name,
@@ -337,7 +343,7 @@ pub struct InstrumentChunk {
 }
 
 impl Chunk for InstrumentChunk {
-    fn parse(buf: &mut BufReader<impl Read>) -> Result<InstrumentChunk, ChunkError> {
+    fn parse(buf: Buffer) -> Result<InstrumentChunk, ChunkError> {
         let size = read_i32_be(buf);
         let base_note = read_i8_be(buf);
         let detune = read_i8_be(buf);
@@ -372,7 +378,7 @@ pub struct MIDIDataChunk {
 }
 
 impl Chunk for MIDIDataChunk {
-    fn parse(buf: &mut BufReader<impl Read>) -> Result<MIDIDataChunk, ChunkError> {
+    fn parse(buf: Buffer) -> Result<MIDIDataChunk, ChunkError> {
         let size = read_i32_be(buf);
 
         let mut data = vec![0; size as usize];
@@ -391,7 +397,7 @@ pub struct AudioRecordingChunk {
 }
 
 impl Chunk for AudioRecordingChunk {
-    fn parse(buf: &mut BufReader<impl Read>) -> Result<AudioRecordingChunk, ChunkError> {
+    fn parse(buf: Buffer) -> Result<AudioRecordingChunk, ChunkError> {
         let size = read_i32_be(buf);
         if size != 24 {
             return Err(ChunkError::InvalidSize(24, size));
@@ -412,7 +418,7 @@ pub struct ApplicationSpecificChunk {
 }
 
 impl Chunk for ApplicationSpecificChunk {
-    fn parse(buf: &mut BufReader<impl Read>) -> Result<ApplicationSpecificChunk, ChunkError> {
+    fn parse(buf: Buffer) -> Result<ApplicationSpecificChunk, ChunkError> {
         let size = read_i32_be(buf);
         let application_signature = read_chunk_id(buf); // TODO verify
         let mut data = vec![0; (size - 4) as usize]; // account for sig size
@@ -462,7 +468,7 @@ pub struct CommentsChunk {
 }
 
 impl Chunk for CommentsChunk {
-    fn parse(buf: &mut BufReader<impl Read>) -> Result<CommentsChunk, ChunkError> {
+    fn parse(buf: Buffer) -> Result<CommentsChunk, ChunkError> {
         let size = read_i32_be(buf);
         let num_comments = read_u16_be(buf);
 
