@@ -57,23 +57,24 @@ pub trait Chunk {
         Self: Sized;
 
     fn write(&self, _file: &mut (impl Write + Seek)) -> Result<usize, io::Error> {
-        unimplemented!();
+        //unimplemented!();
+        Ok(0)
     }
 }
 
 #[derive(Debug)]
 pub struct FormChunk {
-    size: i32,
-    form_type: ChunkID,
-    common: CommonChunk,
-    sound: Option<SoundDataChunk>,
-    comments: Option<CommentsChunk>,
-    instrument: Option<InstrumentChunk>,
-    recording: Option<AudioRecordingChunk>,
-    markers: Option<MarkerChunk>,
-    texts: Vec<TextChunk>,
-    midi: Vec<MIDIDataChunk>,
-    app: Vec<ApplicationSpecificChunk>,
+    pub size: i32,
+    pub form_type: ChunkID,
+    pub common: CommonChunk,
+    pub sound: Option<SoundDataChunk>,
+    pub comments: Option<CommentsChunk>,
+    pub instrument: Option<InstrumentChunk>,
+    pub recording: Option<AudioRecordingChunk>,
+    pub markers: Option<MarkerChunk>,
+    pub texts: Vec<TextChunk>,
+    pub midi: Vec<MIDIDataChunk>,
+    pub app: Vec<ApplicationSpecificChunk>,
 }
 
 impl Chunk for FormChunk {
@@ -139,10 +140,13 @@ impl Chunk for FormChunk {
             };
         }
 
+        let mut common = common.unwrap();
+        common.num_sample_frames = sound.as_ref().map_or(0, |s| s.sample_frames());
+
         Ok(FormChunk {
             size,
             form_type,
-            common: common.unwrap(),
+            common,
             sound,
             comments,
             instrument,
@@ -197,7 +201,6 @@ impl Chunk for FormChunk {
 
 #[derive(Debug)]
 pub struct CommonChunk {
-    pub size: i32,
     pub num_channels: i16,
     pub num_sample_frames: u32,
     pub bit_rate: i16,         // in the spec, this is defined as `sample_size`
@@ -206,7 +209,7 @@ pub struct CommonChunk {
 
 impl Chunk for CommonChunk {
     fn parse(buf: Buffer) -> Result<CommonChunk, ChunkError> {
-        let (size, num_channels, num_sample_frames, bit_rate) = (
+        let (_size, num_channels, num_sample_frames, bit_rate) = (
             read_i32_be(buf),
             read_i16_be(buf),
             read_u32_be(buf),
@@ -217,7 +220,6 @@ impl Chunk for CommonChunk {
         buf.read_exact(&mut rate_buf).unwrap();
 
         Ok(CommonChunk {
-            size,
             num_channels,
             num_sample_frames,
             bit_rate,
@@ -227,7 +229,7 @@ impl Chunk for CommonChunk {
 
     fn write(&self, file: &mut (impl Write + Seek)) -> Result<usize, io::Error> {
         file.write(COMMON)?;
-        file.write(&16i32.to_be_bytes())?;
+        file.write(&18i32.to_be_bytes())?;
         file.write(&self.num_channels.to_be_bytes())?;
         file.write(&self.num_sample_frames.to_be_bytes())?;
         file.write(&self.bit_rate.to_be_bytes())?;
@@ -241,6 +243,12 @@ pub struct SoundDataChunk {
     pub offset: u32,
     pub block_size: u32,
     pub sound_data: Vec<u8>,
+}
+
+impl SoundDataChunk {
+    fn sample_frames(&self) -> u32 {
+        self.sound_data.len() as u32 / 2
+    }
 }
 
 impl fmt::Debug for SoundDataChunk {
@@ -263,14 +271,18 @@ impl Chunk for SoundDataChunk {
 
         let got_size = buf.read(&mut sound_data).unwrap() as i32;
         if size - 8 != got_size {
-            log::warn!("Expected sound chunk of size {}, got {}", size, got_size);
+            log::warn!(
+                "Expected sound chunk of size {}, got {}",
+                size - 8,
+                got_size
+            );
         }
 
         Ok(SoundDataChunk {
             size: got_size + 8,
             offset,
             block_size,
-            sound_data,
+            sound_data: sound_data[..got_size as usize].to_vec(),
         })
     }
 
@@ -279,7 +291,7 @@ impl Chunk for SoundDataChunk {
         file.write(&self.size.to_be_bytes())?;
         file.write(&self.offset.to_be_bytes())?;
         file.write(&self.block_size.to_be_bytes())?;
-        file.write(&self.sound_data[..(self.size as usize - 8)])?;
+        file.write(&self.sound_data)?;
         Ok(self.size as usize + 8)
     }
 }
