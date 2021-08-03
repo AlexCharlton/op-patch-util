@@ -1,7 +1,9 @@
+use crate::op1::OP1Data;
 use crate::util::*;
 
 use log;
-use std::io::{Cursor, Read, Seek, SeekFrom};
+use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
+use std::{error, fmt};
 
 pub type ChunkID = [u8; 4];
 
@@ -23,6 +25,8 @@ pub const ANNOTATION: &ChunkID = b"ANNO";
 pub const AIFF_C: &ChunkID = b"AIFC";
 pub const FORMAT_VER: &ChunkID = b"FVER";
 
+pub const OP_1: &ChunkID = b"op-1";
+
 pub type Buffer<'a> = &'a mut Cursor<Vec<u8>>;
 
 pub fn read_aif(file: &mut (impl Read + Seek)) -> Result<FormChunk, ChunkError> {
@@ -37,18 +41,30 @@ pub enum ChunkError {
     InvalidID(ChunkID),
     InvalidFormType(ChunkID),
     InvalidSize(i32, i32), // expected, got,
-                           // InvalidData(&'static str), // failed to parse something
+    InvalidData(String),   // failed to parse something
 }
+
+impl fmt::Display for ChunkError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+impl error::Error for ChunkError {}
 
 pub trait Chunk {
     fn parse(buffer: Buffer) -> Result<Self, ChunkError>
     where
         Self: Sized;
+
+    fn write(&self, _file: &mut (impl Write + Seek)) -> Result<usize, io::Error> {
+        unimplemented!();
+    }
 }
 
 #[derive(Debug)]
 pub struct FormChunk {
     size: i32,
+    form_type: ChunkID,
     common: CommonChunk,
     sound: Option<SoundDataChunk>,
     comments: Option<CommentsChunk>,
@@ -90,31 +106,31 @@ impl Chunk for FormChunk {
         while let Ok(()) = buf.read_exact(&mut id) {
             match &id {
                 COMMON => {
-                    common = Some(CommonChunk::parse(buf).unwrap());
+                    common = Some(CommonChunk::parse(buf)?);
                 }
                 SOUND => {
-                    sound = Some(SoundDataChunk::parse(buf).unwrap());
+                    sound = Some(SoundDataChunk::parse(buf)?);
                 }
                 MARKER => {
-                    markers = Some(MarkerChunk::parse(buf).unwrap());
+                    markers = Some(MarkerChunk::parse(buf)?);
                 }
                 INSTRUMENT => {
-                    instrument = Some(InstrumentChunk::parse(buf).unwrap());
+                    instrument = Some(InstrumentChunk::parse(buf)?);
                 }
                 MIDI => {
-                    midi.push(MIDIDataChunk::parse(buf).unwrap());
+                    midi.push(MIDIDataChunk::parse(buf)?);
                 }
                 RECORDING => {
-                    recording = Some(AudioRecordingChunk::parse(buf).unwrap());
+                    recording = Some(AudioRecordingChunk::parse(buf)?);
                 }
                 APPLICATION => {
-                    app.push(ApplicationSpecificChunk::parse(buf).unwrap());
+                    app.push(ApplicationSpecificChunk::parse(buf)?);
                 }
                 COMMENTS => {
-                    comments = Some(CommentsChunk::parse(buf).unwrap());
+                    comments = Some(CommentsChunk::parse(buf)?);
                 }
                 NAME | AUTHOR | COPYRIGHT | ANNOTATION => {
-                    texts.push(TextChunk::parse(buf).unwrap());
+                    texts.push(TextChunk::parse(buf)?);
                 }
                 FORMAT_VER => {
                     unimplemented!("FVER chunk detected");
@@ -125,6 +141,7 @@ impl Chunk for FormChunk {
 
         Ok(FormChunk {
             size,
+            form_type,
             common: common.unwrap(),
             sound,
             comments,
@@ -135,6 +152,46 @@ impl Chunk for FormChunk {
             midi,
             app,
         })
+    }
+
+    fn write(&self, file: &mut (impl Write + Seek)) -> Result<usize, io::Error> {
+        file.write(FORM)?;
+        file.write(&0i32.to_be_bytes())?;
+        file.write(&self.form_type)?;
+        let mut size = 4; // form_type
+
+        size += self.common.write(file)?;
+
+        for chunk in self.app.iter() {
+            size += chunk.write(file)?;
+        }
+        for chunk in self.midi.iter() {
+            size += chunk.write(file)?;
+        }
+        for chunk in self.texts.iter() {
+            size += chunk.write(file)?;
+        }
+
+        if let Some(chunk) = &self.comments {
+            size += chunk.write(file)?;
+        }
+        if let Some(chunk) = &self.instrument {
+            size += chunk.write(file)?;
+        }
+        if let Some(chunk) = &self.recording {
+            size += chunk.write(file)?;
+        }
+        if let Some(chunk) = &self.markers {
+            size += chunk.write(file)?;
+        }
+        if let Some(chunk) = &self.sound {
+            size += chunk.write(file)?;
+        }
+
+        file.seek(SeekFrom::Start(4))?;
+        file.write(&(size as i32).to_be_bytes())?;
+
+        Ok(size + 8)
     }
 }
 
@@ -167,6 +224,16 @@ impl Chunk for CommonChunk {
             sample_rate: rate_buf,
         })
     }
+
+    fn write(&self, file: &mut (impl Write + Seek)) -> Result<usize, io::Error> {
+        file.write(COMMON)?;
+        file.write(&16i32.to_be_bytes())?;
+        file.write(&self.num_channels.to_be_bytes())?;
+        file.write(&self.num_sample_frames.to_be_bytes())?;
+        file.write(&self.bit_rate.to_be_bytes())?;
+        file.write(&self.sample_rate)?;
+        Ok(16 + 8)
+    }
 }
 
 pub struct SoundDataChunk {
@@ -176,8 +243,8 @@ pub struct SoundDataChunk {
     pub sound_data: Vec<u8>,
 }
 
-impl std::fmt::Debug for SoundDataChunk {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for SoundDataChunk {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SoundDataChunk")
             .field("size", &self.size)
             .field("offset", &self.offset)
@@ -192,20 +259,28 @@ impl Chunk for SoundDataChunk {
         let offset = read_u32_be(buf);
         let block_size = read_u32_be(buf);
 
-        let mut sound_data = vec![0u8; size as usize];
+        let mut sound_data = vec![0u8; size as usize - 8];
 
         let got_size = buf.read(&mut sound_data).unwrap() as i32;
-        if size != got_size {
+        if size - 8 != got_size {
             log::warn!("Expected sound chunk of size {}, got {}", size, got_size);
-            dbg!(size, offset, block_size, got_size);
         }
 
         Ok(SoundDataChunk {
-            size: got_size,
+            size: got_size + 8,
             offset,
             block_size,
             sound_data,
         })
+    }
+
+    fn write(&self, file: &mut (impl Write + Seek)) -> Result<usize, io::Error> {
+        file.write(SOUND)?;
+        file.write(&self.size.to_be_bytes())?;
+        file.write(&self.offset.to_be_bytes())?;
+        file.write(&self.block_size.to_be_bytes())?;
+        file.write(&self.sound_data[..(self.size as usize - 8)])?;
+        Ok(self.size as usize + 8)
     }
 }
 
@@ -411,24 +486,63 @@ impl Chunk for AudioRecordingChunk {
 }
 
 #[derive(Debug)]
-pub struct ApplicationSpecificChunk {
-    size: i32,
-    application_signature: ChunkID, // TODO check if bytes should be i8
-    data: Vec<i8>,
+pub enum ApplicationSpecificChunk {
+    OP1 {
+        data: OP1Data,
+    },
+    UnknownApplication {
+        size: i32,
+        application_signature: ChunkID,
+        data: Vec<u8>,
+    },
 }
 
 impl Chunk for ApplicationSpecificChunk {
     fn parse(buf: Buffer) -> Result<ApplicationSpecificChunk, ChunkError> {
         let size = read_i32_be(buf);
-        let application_signature = read_chunk_id(buf); // TODO verify
+        let application_signature = read_chunk_id(buf);
         let mut data = vec![0; (size - 4) as usize]; // account for sig size
         buf.read_exact(&mut data).unwrap();
 
-        Ok(ApplicationSpecificChunk {
-            size,
-            application_signature,
-            data: data.iter().map(|byte| i8::from_be_bytes([*byte])).collect(),
-        })
+        match &application_signature {
+            OP_1 => {
+                let end = data.iter().position(|&x| x == 0).unwrap_or(data.len());
+                let ds: Result<OP1Data, _> = serde_json::from_slice(&data[0..end]);
+                match ds {
+                    Ok(data) => Ok(ApplicationSpecificChunk::OP1 { data }),
+                    Err(e) => Err(ChunkError::InvalidData(e.to_string())),
+                }
+            }
+            _ => Ok(ApplicationSpecificChunk::UnknownApplication {
+                size,
+                application_signature,
+                data: data.iter().map(|byte| u8::from_be_bytes([*byte])).collect(),
+            }),
+        }
+    }
+
+    fn write(&self, file: &mut (impl Write + Seek)) -> Result<usize, io::Error> {
+        file.write(APPLICATION)?;
+        Ok(match self {
+            Self::OP1 { data } => {
+                let data = data.to_bytes();
+                let size = data.len() + 4;
+                file.write(&(size as i32).to_be_bytes())?;
+                file.write(OP_1)?;
+                file.write(&data)?;
+                size
+            }
+            Self::UnknownApplication {
+                size,
+                application_signature,
+                data,
+            } => {
+                file.write(&size.to_be_bytes())?;
+                file.write(application_signature)?;
+                file.write(&data)?;
+                *size as usize
+            }
+        } + 8)
     }
 }
 
