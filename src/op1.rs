@@ -122,6 +122,21 @@ impl OP1Data {
 
         Ok(())
     }
+
+    pub fn silence(&mut self, keys: Vec<u8>) -> Result<(), String> {
+        match self {
+            Self::Sampler { .. } => return Err("Cannot silence a synth sample".to_string()),
+            Self::Drum { volume, .. } => {
+                for &key in keys.iter() {
+                    if key < 1 || key > 24 {
+                        return Err(format!("Key {} out of range (1-24)", key));
+                    }
+                    volume[key as usize - 1] = 0;
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Default for OP1Data {

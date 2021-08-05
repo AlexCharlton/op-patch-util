@@ -29,7 +29,7 @@ pub const OP_1: &ChunkID = b"op-1";
 
 pub type Buffer<'a> = &'a mut Cursor<Vec<u8>>;
 
-pub fn read_aif(file: &mut (impl Read + Seek)) -> Result<FormChunk, ChunkError> {
+pub fn read_aif(file: &mut impl Read) -> Result<FormChunk, ChunkError> {
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer).unwrap();
     let mut cursor = Cursor::new(buffer);
@@ -56,7 +56,7 @@ pub trait Chunk {
     where
         Self: Sized;
 
-    fn write(&self, _file: &mut (impl Write + Seek)) -> Result<usize, io::Error> {
+    fn write(&self, _file: &mut impl Write) -> Result<usize, io::Error> {
         //unimplemented!();
         Ok(0)
     }
@@ -158,42 +158,48 @@ impl Chunk for FormChunk {
         })
     }
 
-    fn write(&self, file: &mut (impl Write + Seek)) -> Result<usize, io::Error> {
-        file.write(FORM)?;
-        file.write(&0i32.to_be_bytes())?;
-        file.write(&self.form_type)?;
+    fn write(&self, file: &mut impl Write) -> Result<usize, io::Error> {
+        let mut cursor = Cursor::new(vec![]);
+
+        cursor.write(FORM)?;
+
+        cursor.write(&0i32.to_be_bytes())?;
+        cursor.write(&self.form_type)?;
         let mut size = 4; // form_type
 
-        size += self.common.write(file)?;
+        size += self.common.write(&mut cursor)?;
 
         for chunk in self.app.iter() {
-            size += chunk.write(file)?;
+            size += chunk.write(&mut cursor)?;
         }
         for chunk in self.midi.iter() {
-            size += chunk.write(file)?;
+            size += chunk.write(&mut cursor)?;
         }
         for chunk in self.texts.iter() {
-            size += chunk.write(file)?;
+            size += chunk.write(&mut cursor)?;
         }
 
         if let Some(chunk) = &self.comments {
-            size += chunk.write(file)?;
+            size += chunk.write(&mut cursor)?;
         }
         if let Some(chunk) = &self.instrument {
-            size += chunk.write(file)?;
+            size += chunk.write(&mut cursor)?;
         }
         if let Some(chunk) = &self.recording {
-            size += chunk.write(file)?;
+            size += chunk.write(&mut cursor)?;
         }
         if let Some(chunk) = &self.markers {
-            size += chunk.write(file)?;
+            size += chunk.write(&mut cursor)?;
         }
         if let Some(chunk) = &self.sound {
-            size += chunk.write(file)?;
+            size += chunk.write(&mut cursor)?;
         }
 
-        file.seek(SeekFrom::Start(4))?;
-        file.write(&(size as i32).to_be_bytes())?;
+        cursor.seek(SeekFrom::Start(4))?;
+        cursor.write(&(size as i32).to_be_bytes())?;
+
+        cursor.seek(SeekFrom::Start(0))?;
+        file.write(cursor.get_ref())?;
 
         Ok(size + 8)
     }
@@ -227,7 +233,7 @@ impl Chunk for CommonChunk {
         })
     }
 
-    fn write(&self, file: &mut (impl Write + Seek)) -> Result<usize, io::Error> {
+    fn write(&self, file: &mut impl Write) -> Result<usize, io::Error> {
         file.write(COMMON)?;
         file.write(&18i32.to_be_bytes())?;
         file.write(&self.num_channels.to_be_bytes())?;
@@ -286,7 +292,7 @@ impl Chunk for SoundDataChunk {
         })
     }
 
-    fn write(&self, file: &mut (impl Write + Seek)) -> Result<usize, io::Error> {
+    fn write(&self, file: &mut impl Write) -> Result<usize, io::Error> {
         file.write(SOUND)?;
         file.write(&self.size.to_be_bytes())?;
         file.write(&self.offset.to_be_bytes())?;
@@ -533,7 +539,7 @@ impl Chunk for ApplicationSpecificChunk {
         }
     }
 
-    fn write(&self, file: &mut (impl Write + Seek)) -> Result<usize, io::Error> {
+    fn write(&self, file: &mut impl Write) -> Result<usize, io::Error> {
         file.write(APPLICATION)?;
         Ok(match self {
             Self::OP1 { data } => {
