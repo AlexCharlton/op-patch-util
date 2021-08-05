@@ -84,6 +84,44 @@ impl OP1Data {
         }
         vec
     }
+
+    pub fn shift_samples(&mut self, n: i8) -> Result<(), String> {
+        if n > 23 || n < -23 {
+            return Err("Cannot shift beyond 23 semitones".to_string());
+        }
+        match self {
+            Self::Sampler { .. } => return Err("Cannot shift a synth sample".to_string()),
+            Self::Drum {
+                start,
+                end,
+                pitch,
+                reverse,
+                volume,
+                playmode,
+                ..
+            } => {
+                if n > 0 {
+                    let n = n as usize;
+                    start.rotate_right(n);
+                    end.rotate_right(n);
+                    pitch.rotate_right(n);
+                    reverse.rotate_right(n);
+                    volume.rotate_right(n);
+                    playmode.rotate_right(n);
+                } else {
+                    let n = n.abs() as usize;
+                    start.rotate_left(n);
+                    end.rotate_left(n);
+                    pitch.rotate_left(n);
+                    reverse.rotate_left(n);
+                    volume.rotate_left(n);
+                    playmode.rotate_left(n);
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl Default for OP1Data {
