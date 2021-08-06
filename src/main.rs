@@ -8,7 +8,7 @@ use clap::{
     ArgMatches, SubCommand,
 };
 use std::error;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{self, StdinLock, StdoutLock};
 
 fn main() -> Result<(), Box<dyn error::Error>> {
@@ -102,6 +102,14 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         )
         .subcommand(
             io_command(SubCommand::with_name("set"))
+                .arg(
+                    Arg::with_name("JSON")
+                        .value_name("JSON")
+                        .short("j")
+                        .long("json")
+                        .required(true)
+                        .help("The JSON file with which to overwrite the OP metadata. Must be valid OP metadata.")
+                )
                 .about("Overwrite the OP metadata with a given JSON file"),
         )
         .subcommand(
@@ -138,8 +146,8 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         ("reverse", Some(sub_m)) => reverse(sub_m)?,
         ("forward", Some(sub_m)) => forward(sub_m)?,
         ("copy", Some(sub_m)) => copy(sub_m)?,
-        // ("dump", Some(sub_m)) => dump(sub_m)?,
-        // ("set", Some(sub_m)) => set(sub_m)?,
+        ("dump", Some(sub_m)) => dump(sub_m)?,
+        ("set", Some(sub_m)) => set(sub_m)?,
         _ => {
             eprintln!("Error: subcommand required\n");
             println!("{}", help);
@@ -341,4 +349,50 @@ fn copy(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
     let keys = matches_keys(matches, "KEYS")?;
     let src = matches_keys(matches, "SRC")?;
     op(matches, |data| data.copy(&keys, &src))
+}
+
+fn dump(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
+    let (i, o) = matches_io(matches)?;
+    let mut form = match i {
+        Input::Stdin(mut stdin) => read_aif(&mut stdin)?,
+        Input::File(mut file) => read_aif(&mut file)?,
+    };
+
+    let json = if let Some(ApplicationSpecificChunk::OP1 { data }) = form.app.first_mut() {
+        serde_json::to_vec_pretty(data)?
+    } else {
+        Err("No OP data to dump")?
+    };
+
+    use std::io::Write;
+    match o {
+        Output::Stdout(mut stdout) => stdout.write_all(&json)?,
+        Output::File(mut file) => file.write_all(&json)?,
+    };
+    Ok(())
+}
+
+fn set(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
+    let (i, o) = matches_io(matches)?;
+    let mut form = match i {
+        Input::Stdin(mut stdin) => read_aif(&mut stdin)?,
+        Input::File(mut file) => read_aif(&mut file)?,
+    };
+
+    log::info!("Input file: {:#?}", &form);
+
+    let json = fs::read(matches.value_of("JSON").unwrap())?;
+    let new_data: op1::OP1Data = serde_json::from_slice(&json)?;
+
+    if let Some(ApplicationSpecificChunk::OP1 { data }) = form.app.first_mut() {
+        *data = new_data;
+    } else {
+        Err("No OP data to alter")?;
+    }
+
+    match o {
+        Output::Stdout(mut stdout) => form.write(&mut stdout)?,
+        Output::File(mut file) => form.write(&mut file)?,
+    };
+    Ok(())
 }

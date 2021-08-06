@@ -9,11 +9,11 @@ pub enum OP1Data {
         octave: u8,       // 0
         start: [u32; 24],
         end: [u32; 24],
-        pitch: [i16; 24], // -24320/0/24567 512 per semitone ;-1 semitone starts at -256; -48 to +48
-        reverse: [u16; 24], // 8192/16384
-        volume: [u16; 24], // 0/8192/16384
+        pitch: [i16; 24],    // -24567/0/24567 512 per semitone; -48 to +48
+        reverse: [u16; 24],  // 8192/16384
+        volume: [u16; 24],   // 0/8192/16384
         playmode: [u16; 24], // 0/8192/16384
-        dyna_env: [u16; 8], // 0-8182?
+        dyna_env: [u16; 8],  // 0-8182?
         lfo_active: bool,
         lfo_type: LFOType,
         lfo_params: [u16; 8], // 0-16000?
