@@ -4,8 +4,8 @@ mod util;
 
 use chunks::{read_aif, ApplicationSpecificChunk, Chunk};
 use clap::{
-    crate_authors, crate_description, crate_version, value_t_or_exit, App, Arg, ArgMatches,
-    SubCommand,
+    crate_authors, crate_description, crate_version, value_t_or_exit, values_t_or_exit, App, Arg,
+    ArgMatches, SubCommand,
 };
 use std::error;
 use std::fs::File;
@@ -41,6 +41,13 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 "KEYS",
                 "keys",
             ))
+                .arg(Arg::with_name("VOLUME")
+                     .short("g")
+                     .long("gain")
+                     .value_name("VOLUME")
+                     .use_delimiter(true)
+                     .required(true)
+                     .help("A list of comma-separated numbers between -1-+1, representing the amount of gain to apply. If more keys are provided than gain values, the last gain will be applied to any remaining keys"))
                 .about("Set sample gain to a value between -1.0 (-inf) and +1.0 (+12 dB)"),
         )
         .subcommand(
@@ -60,11 +67,18 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .about("Set sample to play forward"),
         )
         .subcommand(
-            io_command(key_command(key_command(
+            io_command(key_command(
                 SubCommand::with_name("copy"),
                 "KEYS",
                 "keys",
-            ), "DST", "dst"))
+            ))
+                .arg(Arg::with_name("DST")
+                     .short("d")
+                     .long("dst")
+                     .value_name("DST")
+                     .use_delimiter(true)
+                     .required(true)
+                     .help("Same as KEYS, but this is the key that is being copied into. Must be the same length as KEYS"))
                 .about("Copy samples to DST keys"),
         )
         .subcommand(
@@ -75,11 +89,12 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             ))
                 .arg(Arg::with_name("PITCH")
                      .short("p")
+                     .long("pitch")
                      .value_name("PITCH")
                      .use_delimiter(true)
                      .required(true)
                      .help("A list of comma-separated numbers between -48-+48, representing the number of semitones to shift pitch by. Colons can be used to represent inclusive ranges for whole semitones. Decimal numbers may be used to perform micro-tonal shifts. If more keys are provided than pitch values, the last pitch will be applied to any remaining keys. E.g.: `-k 1:7 -p -7:-1` will shift the lower F to B keys by -7 to -1 semitones; `-k 1-24 -p 0.12` will shift all keys up by 12 cents"))
-            .about("Shift the pitch of a given key"),
+                .about("Shift the pitch of a given key"),
         )
         .subcommand(
             io_command(SubCommand::with_name("dump"))
@@ -119,6 +134,12 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         ("shift", Some(sub_m)) => shift(sub_m)?,
         ("silence", Some(sub_m)) => silence(sub_m)?,
         ("pitch", Some(sub_m)) => pitch(sub_m)?,
+        ("volume", Some(sub_m)) => volume(sub_m)?,
+        ("reverse", Some(sub_m)) => reverse(sub_m)?,
+        ("forward", Some(sub_m)) => forward(sub_m)?,
+        // ("copy", Some(sub_m)) => copy(sub_m)?,
+        // ("dump", Some(sub_m)) => dump(sub_m)?,
+        // ("set", Some(sub_m)) => set(sub_m)?,
         _ => {
             eprintln!("Error: subcommand required\n");
             println!("{}", help);
@@ -259,9 +280,10 @@ fn matches_pitches<'a>(
     Ok(r)
 }
 
-fn shift(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
-    let n = value_t_or_exit!(matches.value_of("N"), i8);
-
+fn op<F>(matches: &ArgMatches, f: F) -> Result<(), Box<dyn error::Error>>
+where
+    F: Fn(&mut op1::OP1Data) -> Result<(), String>,
+{
     let (i, o) = matches_io(matches)?;
     let mut form = match i {
         Input::Stdin(mut stdin) => read_aif(&mut stdin)?,
@@ -271,9 +293,9 @@ fn shift(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
     log::info!("Input file: {:#?}", &form);
 
     if let Some(ApplicationSpecificChunk::OP1 { data }) = form.app.first_mut() {
-        data.shift_samples(n)?;
+        f(data)?;
     } else {
-        Err("No OP data to shift")?;
+        Err("No OP data to alter")?;
     }
 
     match o {
@@ -283,53 +305,34 @@ fn shift(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
     Ok(())
 }
 
+fn shift(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
+    let n = value_t_or_exit!(matches.value_of("N"), i8);
+    op(matches, |data| data.shift_samples(n))
+}
+
 fn silence(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
     let keys = matches_keys(matches, "KEYS")?;
-
-    let (i, o) = matches_io(matches)?;
-    let mut form = match i {
-        Input::Stdin(mut stdin) => read_aif(&mut stdin)?,
-        Input::File(mut file) => read_aif(&mut file)?,
-    };
-
-    log::info!("Input file: {:#?}", &form);
-
-    if let Some(ApplicationSpecificChunk::OP1 { data }) = form.app.first_mut() {
-        data.silence(keys)?;
-    } else {
-        Err("No OP data to silence")?;
-    }
-
-    match o {
-        Output::Stdout(mut stdout) => form.write(&mut stdout)?,
-        Output::File(mut file) => form.write(&mut file)?,
-    };
-
-    Ok(())
+    op(matches, |data| data.gain(&keys, &[-1.0]))
 }
 
 fn pitch(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
     let keys = matches_keys(matches, "KEYS")?;
     let pitches = matches_pitches(matches, "PITCH")?;
+    op(matches, |data| data.pitch(&keys, &pitches))
+}
 
-    let (i, o) = matches_io(matches)?;
-    let mut form = match i {
-        Input::Stdin(mut stdin) => read_aif(&mut stdin)?,
-        Input::File(mut file) => read_aif(&mut file)?,
-    };
+fn volume(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
+    let keys = matches_keys(matches, "KEYS")?;
+    let gains = values_t_or_exit!(matches.values_of("VOLUME"), f32);
+    op(matches, |data| data.gain(&keys, &gains))
+}
 
-    log::info!("Input file: {:#?}", &form);
+fn forward(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
+    let keys = matches_keys(matches, "KEYS")?;
+    op(matches, |data| data.reverse(&keys, false))
+}
 
-    if let Some(ApplicationSpecificChunk::OP1 { data }) = form.app.first_mut() {
-        data.pitch(keys, pitches)?;
-    } else {
-        Err("No OP data to pitch")?;
-    }
-
-    match o {
-        Output::Stdout(mut stdout) => form.write(&mut stdout)?,
-        Output::File(mut file) => form.write(&mut file)?,
-    };
-
-    Ok(())
+fn reverse(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
+    let keys = matches_keys(matches, "KEYS")?;
+    op(matches, |data| data.reverse(&keys, true))
 }

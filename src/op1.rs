@@ -123,22 +123,7 @@ impl OP1Data {
         Ok(())
     }
 
-    pub fn silence(&mut self, keys: Vec<u8>) -> Result<(), String> {
-        match self {
-            Self::Sampler { .. } => return Err("Cannot silence a synth sample".to_string()),
-            Self::Drum { volume, .. } => {
-                for &key in keys.iter() {
-                    if key < 1 || key > 24 {
-                        return Err(format!("Key {} out of range (1-24)", key));
-                    }
-                    volume[key as usize - 1] = 0;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    pub fn pitch(&mut self, keys: Vec<u8>, pitches: Vec<f32>) -> Result<(), String> {
+    pub fn pitch(&mut self, keys: &[u8], pitches: &[f32]) -> Result<(), String> {
         let mut p = 0;
         if pitches.is_empty() {
             return Err("No pitch provided".to_string());
@@ -156,11 +141,54 @@ impl OP1Data {
                         return Err(format!("Pitch {} out of range (-48-+48)", ptch));
                     }
                     // TODO: Do negative numbers really need special handling?
-                    pitch[key as usize - 1] = (512.0 * pitches[p]) as i16;
+                    pitch[key as usize - 1] = (512.0 * ptch) as i16;
 
                     if p + 1 < pitches.len() {
                         p += 1;
                     }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn gain(&mut self, keys: &[u8], gains: &[f32]) -> Result<(), String> {
+        let mut g = 0;
+        if gains.is_empty() {
+            return Err("No gains provided".to_string());
+        }
+
+        match self {
+            Self::Sampler { .. } => return Err("Cannot gain a synth sample".to_string()),
+            Self::Drum { volume, .. } => {
+                for &key in keys.iter() {
+                    if key < 1 || key > 24 {
+                        return Err(format!("Key {} out of range (1-24)", key));
+                    }
+                    let gain = gains[g];
+                    if gain < -1.0 || gain > 1.0 {
+                        return Err(format!("Gain {} out of range (-1-+1)", gain));
+                    }
+                    volume[key as usize - 1] = (8192.0 * (gain + 1.0)) as u16;
+
+                    if g + 1 < gains.len() {
+                        g += 1;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn reverse(&mut self, keys: &[u8], rev: bool) -> Result<(), String> {
+        match self {
+            Self::Sampler { .. } => return Err("Cannot reverse a synth sample".to_string()),
+            Self::Drum { reverse, .. } => {
+                for &key in keys.iter() {
+                    if key < 1 || key > 24 {
+                        return Err(format!("Key {} out of range (1-24)", key));
+                    }
+                    reverse[key as usize - 1] = if rev { 16384 } else { 8192 };
                 }
             }
         }
