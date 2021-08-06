@@ -20,12 +20,12 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             Arg::with_name("verbosity")
                 .short("v")
                 .multiple(true)
-                .help("Increase message verbosity"),
+                .help("Increase message verbosity."),
         )
         .arg(
             Arg::with_name("quiet")
                 .short("q")
-                .help("Silence all output"),
+                .help("Silence all output."),
         )
         .subcommand(
             io_command(key_command(
@@ -47,7 +47,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                      .value_name("VOLUME")
                      .use_delimiter(true)
                      .required(true)
-                     .help("A list of comma-separated numbers between -1-+1, representing the amount of gain to apply. If more keys are provided than gain values, the last gain will be applied to any remaining keys"))
+                     .help("A list of comma-separated numbers between -1-+1, representing the amount of gain to apply. If more keys are provided than gain values, the last gain will be applied to any remaining keys."))
                 .about("Set sample gain to a value between -1.0 (-inf) and +1.0 (+12 dB)"),
         )
         .subcommand(
@@ -72,14 +72,14 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 "KEYS",
                 "keys",
             ))
-                .arg(Arg::with_name("DST")
-                     .short("d")
-                     .long("dst")
-                     .value_name("DST")
+                .arg(Arg::with_name("SRC")
+                     .short("s")
+                     .long("src")
+                     .value_name("SRC")
                      .use_delimiter(true)
                      .required(true)
-                     .help("Same as KEYS, but this is the key that is being copied into. Must be the same length as KEYS"))
-                .about("Copy samples to DST keys"),
+                     .help("Same as KEYS, but this is the key that is being copied. If there are more KEYS that SRCs, then the last SRC will be copied to all remaining destinations."))
+                .about("Copy samples from one set of keys to another"),
         )
         .subcommand(
             io_command(key_command(
@@ -93,7 +93,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                      .value_name("PITCH")
                      .use_delimiter(true)
                      .required(true)
-                     .help("A list of comma-separated numbers between -48-+48, representing the number of semitones to shift pitch by. Colons can be used to represent inclusive ranges for whole semitones. Decimal numbers may be used to perform micro-tonal shifts. If more keys are provided than pitch values, the last pitch will be applied to any remaining keys. E.g.: `-k 1:7 -p -7:-1` will shift the lower F to B keys by -7 to -1 semitones; `-k 1-24 -p 0.12` will shift all keys up by 12 cents"))
+                     .help("A list of comma-separated numbers between -48-+48, representing the number of semitones to shift pitch by. Colons can be used to represent inclusive ranges for whole semitones. Decimal numbers may be used to perform micro-tonal shifts. If more keys are provided than pitch values, the last pitch will be applied to any remaining keys. E.g.: `-k 1:7 -p -7:-1` will shift the lower F to B keys by -7 to -1 semitones; `-k 1-24 -p 0.12` will shift all keys up by 12 cents."))
                 .about("Shift the pitch of a given key"),
         )
         .subcommand(
@@ -137,7 +137,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         ("volume", Some(sub_m)) => volume(sub_m)?,
         ("reverse", Some(sub_m)) => reverse(sub_m)?,
         ("forward", Some(sub_m)) => forward(sub_m)?,
-        // ("copy", Some(sub_m)) => copy(sub_m)?,
+        ("copy", Some(sub_m)) => copy(sub_m)?,
         // ("dump", Some(sub_m)) => dump(sub_m)?,
         // ("set", Some(sub_m)) => set(sub_m)?,
         _ => {
@@ -151,11 +151,11 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
 fn io_command<'a, 'b>(command: App<'a, 'b>) -> App<'a, 'b> {
     command
-        .arg(Arg::with_name("INPUT").index(1).help("Omit to use STDIN"))
+        .arg(Arg::with_name("INPUT").index(1).help("Omit to use STDIN."))
         .arg(
             Arg::with_name("OUTPUT")
                 .index(2)
-                .help("Use `-` to send output to STDOUT"),
+                .help("Use `-` to send output to STDOUT."),
         )
         .arg(
             Arg::with_name("OUTPUT_FILE")
@@ -177,7 +177,7 @@ fn key_command<'a, 'b>(
              .value_name(name)
              .use_delimiter(true)
              .required(true)
-             .help("One or more comma-separated numbers between 1-24, representing the keys on the OP. Colons can be used to represent inclusive ranges. E.g.: `1,2,13,14` is both F and F# keys; `1:7,13:19` is both sets of F to B keys"))
+             .help("One or more comma-separated numbers between 1-24, representing the keys on the OP that are to be modified. Colons can be used to represent inclusive ranges. E.g.: `1,2,13,14` is both F and F# keys; `1:7,13:19` is both sets of F to B keys."))
 }
 
 enum Input<'a> {
@@ -265,8 +265,8 @@ fn matches_pitches<'a>(
         match range.len() {
             1 => r.push(pitch.parse::<f32>()?),
             2 => {
-                let start = range[0].parse::<u8>()?;
-                let end = range[1].parse::<u8>()?;
+                let start = range[0].parse::<i8>()?;
+                let end = range[1].parse::<i8>()?;
                 if start < end {
                     r.extend((start..=end).map(|x| x as f32).collect::<Vec<f32>>());
                 } else {
@@ -335,4 +335,10 @@ fn forward(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
 fn reverse(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
     let keys = matches_keys(matches, "KEYS")?;
     op(matches, |data| data.reverse(&keys, true))
+}
+
+fn copy(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
+    let keys = matches_keys(matches, "KEYS")?;
+    let src = matches_keys(matches, "SRC")?;
+    op(matches, |data| data.copy(&keys, &src))
 }

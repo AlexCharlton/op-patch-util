@@ -194,6 +194,48 @@ impl OP1Data {
         }
         Ok(())
     }
+
+    pub fn copy(&mut self, keys: &[u8], srcs: &[u8]) -> Result<(), String> {
+        let mut s = 0;
+        if srcs.is_empty() {
+            return Err("No source keys provided".to_string());
+        }
+
+        match self {
+            Self::Sampler { .. } => return Err("Cannot copy a synth sample".to_string()),
+            Self::Drum {
+                start,
+                end,
+                pitch,
+                reverse,
+                volume,
+                playmode,
+                ..
+            } => {
+                for &key in keys.iter() {
+                    if key < 1 || key > 24 {
+                        return Err(format!("Key {} out of range (1-24)", key));
+                    }
+                    let src = srcs[s];
+                    if src < 1 || src > 24 {
+                        return Err(format!("Key {} out of range (1-24)", src));
+                    }
+
+                    start[key as usize - 1] = start[src as usize - 1];
+                    end[key as usize - 1] = end[src as usize - 1];
+                    pitch[key as usize - 1] = pitch[src as usize - 1];
+                    reverse[key as usize - 1] = reverse[src as usize - 1];
+                    volume[key as usize - 1] = volume[src as usize - 1];
+                    playmode[key as usize - 1] = playmode[src as usize - 1];
+
+                    if s + 1 < srcs.len() {
+                        s += 1;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Default for OP1Data {
