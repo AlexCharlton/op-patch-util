@@ -9,10 +9,10 @@ pub enum OP1Data {
         octave: u8,       // 0
         start: [u32; 24],
         end: [u32; 24],
-        pitch: [i16; 24], // yes -24320/0/24567 512 per semitone ;-1 semitone starts at -256; -48 to +48
-        reverse: [u16; 24], // yes 8192/16384
-        volume: [u16; 24], // yes 0/8192/16384
-        playmode: [u16; 24], // no 0/8192/16384
+        pitch: [i16; 24], // -24320/0/24567 512 per semitone ;-1 semitone starts at -256; -48 to +48
+        reverse: [u16; 24], // 8192/16384
+        volume: [u16; 24], // 0/8192/16384
+        playmode: [u16; 24], // 0/8192/16384
         dyna_env: [u16; 8], // 0-8182?
         lfo_active: bool,
         lfo_type: LFOType,
@@ -132,6 +132,35 @@ impl OP1Data {
                         return Err(format!("Key {} out of range (1-24)", key));
                     }
                     volume[key as usize - 1] = 0;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn pitch(&mut self, keys: Vec<u8>, pitches: Vec<f32>) -> Result<(), String> {
+        let mut p = 0;
+        if pitches.is_empty() {
+            return Err("No pitch provided".to_string());
+        }
+
+        match self {
+            Self::Sampler { .. } => return Err("Cannot pitch a synth sample".to_string()),
+            Self::Drum { pitch, .. } => {
+                for &key in keys.iter() {
+                    if key < 1 || key > 24 {
+                        return Err(format!("Key {} out of range (1-24)", key));
+                    }
+                    let ptch = pitches[p];
+                    if ptch < -48.0 || ptch > 48.0 {
+                        return Err(format!("Pitch {} out of range (-48-+48)", ptch));
+                    }
+                    // TODO: Do negative numbers really need special handling?
+                    pitch[key as usize - 1] = (512.0 * pitches[p]) as i16;
+
+                    if p + 1 < pitches.len() {
+                        p += 1;
+                    }
                 }
             }
         }
