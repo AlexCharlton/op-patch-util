@@ -123,7 +123,7 @@ impl OP1Data {
         Ok(())
     }
 
-    pub fn pitch(&mut self, keys: &[u8], pitches: &[f32]) -> Result<(), String> {
+    pub fn pitch(&mut self, keys: &[u8], pitches: &[i8]) -> Result<(), String> {
         let mut p = 0;
         if pitches.is_empty() {
             return Err("No pitch provided".to_string());
@@ -137,11 +137,10 @@ impl OP1Data {
                         return Err(format!("Key {} out of range (1-24)", key));
                     }
                     let ptch = pitches[p];
-                    if ptch < -48.0 || ptch > 48.0 {
+                    if ptch < -48 || ptch > 48 {
                         return Err(format!("Pitch {} out of range (-48-+48)", ptch));
                     }
-                    // TODO: Do negative numbers really need special handling?
-                    pitch[key as usize - 1] = (512.0 * ptch) as i16;
+                    pitch[key as usize - 1] = ptch as i16 * 512;
 
                     if p + 1 < pitches.len() {
                         p += 1;

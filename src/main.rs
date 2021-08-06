@@ -93,7 +93,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                      .value_name("PITCH")
                      .use_delimiter(true)
                      .required(true)
-                     .help("A list of comma-separated numbers between -48-+48, representing the number of semitones to shift pitch by. Colons can be used to represent inclusive ranges for whole semitones. Decimal numbers may be used to perform micro-tonal shifts. If more keys are provided than pitch values, the last pitch will be applied to any remaining keys. E.g.: `-k 1:7 -p -7:-1` will shift the lower F to B keys by -7 to -1 semitones; `-k 1-24 -p 0.12` will shift all keys up by 12 cents."))
+                     .help("A list of comma-separated numbers between -48-+48, representing the number of semitones to shift pitch by. Colons can be used to represent inclusive ranges for whole semitones. Only whole numbers may be used. If more keys are provided than pitch values, the last pitch will be applied to any remaining keys. E.g.: `-k 1:7 -p -7:-1` will shift the lower F to B keys by -7 to -1 semitones; `-k 1-24 -p 2` will shift all keys up by 2 semitones."))
                 .about("Shift the pitch of a given key"),
         )
         .subcommand(
@@ -265,20 +265,20 @@ fn matches_keys<'a>(matches: &ArgMatches, key_arg: &str) -> Result<Vec<u8>, Box<
 fn matches_pitches<'a>(
     matches: &ArgMatches,
     pitch_arg: &str,
-) -> Result<Vec<f32>, Box<dyn error::Error>> {
+) -> Result<Vec<i8>, Box<dyn error::Error>> {
     let pitches: Vec<&str> = matches.values_of(pitch_arg).unwrap().collect();
     let mut r = vec![];
     for pitch in pitches.iter() {
         let range: Vec<&str> = pitch.split(":").collect();
         match range.len() {
-            1 => r.push(pitch.parse::<f32>()?),
+            1 => r.push(pitch.parse::<i8>()?),
             2 => {
                 let start = range[0].parse::<i8>()?;
                 let end = range[1].parse::<i8>()?;
                 if start < end {
-                    r.extend((start..=end).map(|x| x as f32).collect::<Vec<f32>>());
+                    r.extend((start..=end).collect::<Vec<i8>>());
                 } else {
-                    r.extend((end..=start).rev().map(|x| x as f32).collect::<Vec<f32>>());
+                    r.extend((end..=start).rev().collect::<Vec<i8>>());
                 }
             }
             _ => Err(format!("Invalid pitch: {}", pitch))?,
