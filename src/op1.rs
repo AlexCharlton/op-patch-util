@@ -55,7 +55,7 @@ impl OP1Data {
             fx_params: [8000; 8],
             lfo_active: false,
             lfo_type: LFOType::Tremolo,
-            lfo_params: [16000, 16000, 16000, 16000, 0, 0, 0, 0],
+            lfo_params: [16000, 0, 0, 16000, 0, 0, 0, 0],
         }
     }
 
@@ -73,7 +73,7 @@ impl OP1Data {
             fx_params: [8000; 8],
             lfo_active: false,
             lfo_type: LFOType::Tremolo,
-            lfo_params: [16000, 16000, 16000, 16000, 0, 0, 0, 0],
+            lfo_params: [16000, 0, 0, 16000, 0, 0, 0, 0],
         }
     }
 

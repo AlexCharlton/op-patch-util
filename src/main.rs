@@ -97,7 +97,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .about("Shift the pitch of a given key"),
         )
         .subcommand(
-            io_command(SubCommand::with_name("dump"))
+            io_command_with_default(SubCommand::with_name("dump"), "op.json")
                 .about("Output the OP metadata associated with a patch"),
         )
         .subcommand(
@@ -121,6 +121,18 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                         .short("n")
                         .required(true),
                 ),
+        ).subcommand(
+            io_command(SubCommand::with_name("synth"))
+                .about("Create a synth sampler from a WAV file")
+                .arg(
+                    Arg::with_name("BASE_FREQ")
+                        .value_name("BASE_FREQ")
+                        .short("f")
+                        .default_value("440")
+                ),
+        ).subcommand(
+            SubCommand::with_name("drum")
+                .about("Create a drum patch from up to 24 WAV files")
         );
 
     let mut help = vec![];
@@ -148,6 +160,8 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         ("copy", Some(sub_m)) => copy(sub_m)?,
         ("dump", Some(sub_m)) => dump(sub_m)?,
         ("set", Some(sub_m)) => set(sub_m)?,
+        ("synth", Some(sub_m)) => synth(sub_m)?,
+        ("drum", Some(sub_m)) => drum(sub_m)?,
         _ => {
             eprintln!("Error: subcommand required\n");
             println!("{}", help);
@@ -158,6 +172,10 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 }
 
 fn io_command<'a, 'b>(command: App<'a, 'b>) -> App<'a, 'b> {
+    io_command_with_default(command, "output.aif")
+}
+
+fn io_command_with_default<'a, 'b>(command: App<'a, 'b>, default: &'static str) -> App<'a, 'b> {
     command
         .arg(Arg::with_name("INPUT").index(1).help("Omit to use STDIN."))
         .arg(
@@ -169,7 +187,7 @@ fn io_command<'a, 'b>(command: App<'a, 'b>) -> App<'a, 'b> {
             Arg::with_name("OUTPUT_FILE")
                 .short("o")
                 .long("output")
-                .default_value("output.aif"),
+                .default_value(default),
         )
 }
 
@@ -358,6 +376,8 @@ fn dump(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
         Input::File(mut file) => read_aif(&mut file)?,
     };
 
+    log::info!("Input file: {:#?}", &form);
+
     let json = if let Some(ApplicationSpecificChunk::OP1 { data }) = form.app.first_mut() {
         serde_json::to_vec_pretty(data)?
     } else {
@@ -395,4 +415,107 @@ fn set(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
         Output::File(mut file) => form.write(&mut file)?,
     };
     Ok(())
+}
+
+fn wav_data_to_i16(data: &wav::BitDepth) -> Vec<i16> {
+    match data {
+        wav::BitDepth::Eight(d) => d.iter().map(|&x| (x as i16) << 8).collect(),
+        wav::BitDepth::Sixteen(d) => d.iter().map(|&x| x as i16).collect(),
+        wav::BitDepth::TwentyFour(d) => d.iter().map(|&x| (x >> 16) as i16).collect(),
+        wav::BitDepth::ThirtyTwoFloat(d) => d.iter().map(|&x| (x as i32 >> 16) as i16).collect(),
+        wav::BitDepth::Empty => vec![],
+    }
+}
+
+fn wav_i16_to_bytes(data: &[i16]) -> Vec<u8> {
+    let mut r = Vec::with_capacity(data.len() * 2);
+    for x in data.iter() {
+        let [a, b] = x.to_be_bytes();
+        r.push(a);
+        r.push(b);
+    }
+    r
+}
+
+fn drop_channels(data: &[i16], num_channels: usize) -> Vec<i16> {
+    let mut r = Vec::with_capacity(data.len() / num_channels);
+    let mut i = 0;
+    while i < data.len() {
+        r.push(data[i]);
+        i += num_channels;
+    }
+    r
+}
+
+fn wav_to_bytes(header: &wav::Header, data: &wav::BitDepth) -> Result<Vec<u8>, &'static str> {
+    if header.sampling_rate != 44100 {
+        Err("Sample must be encoded at 44100 Hz")?;
+    }
+    if header.audio_format != 1 {
+        Err("Sample must be PCM encoded")?;
+    }
+
+    let mut data = wav_data_to_i16(data);
+
+    if header.channel_count != 1 {
+        data = drop_channels(&data, header.channel_count as usize);
+    }
+
+    Ok(wav_i16_to_bytes(&data))
+}
+
+fn synth(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
+    let (i, o) = matches_io(matches)?;
+    let basefreq = value_t_or_exit!(matches.value_of("BASE_FREQ"), u16);
+
+    let (header, data) = match i {
+        Input::Stdin(mut stdin) => {
+            use std::io::Read;
+            let mut buffer = Vec::new();
+            stdin.read_to_end(&mut buffer)?;
+            let mut cursor = io::Cursor::new(buffer);
+            wav::read(&mut cursor)?
+        }
+        Input::File(mut file) => wav::read(&mut file)?,
+    };
+
+    log::info!("WAV header: {:#?}", header);
+
+    let mut sound_data = wav_to_bytes(&header, &data)?;
+    let target_len = 44100 * 6 * 2; // Hz * seconds * 2 bytes
+    if sound_data.len() > target_len {
+        log::warn!("Sample is longer than 6 seconds. Truncating to fit.");
+    } else if sound_data.len() < target_len {
+        log::warn!("Sample is shorter than 6 seconds. Extending with silence.");
+    }
+    sound_data.resize(target_len, 0);
+
+    let mut form = chunks::FormChunk::default();
+    form.common.num_sample_frames = sound_data.len() as u32 / 2;
+    let mut op_data = op1::OP1Data::default_sampler();
+    if let op1::OP1Data::Sampler {
+        ref mut base_freq, ..
+    } = op_data
+    {
+        *base_freq = basefreq;
+    }
+    form.app
+        .push(chunks::ApplicationSpecificChunk::OP1 { data: op_data });
+    form.sound = Some(chunks::SoundDataChunk {
+        size: sound_data.len() as i32 + 8,
+        offset: 0,
+        block_size: 0,
+        sound_data,
+    });
+
+    match o {
+        Output::Stdout(mut stdout) => form.write(&mut stdout)?,
+        Output::File(mut file) => form.write(&mut file)?,
+    };
+    Ok(())
+}
+
+fn drum(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
+    unimplemented!();
+    // Ok(())
 }

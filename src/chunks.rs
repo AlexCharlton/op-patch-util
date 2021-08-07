@@ -1,3 +1,5 @@
+// Parts of this file adapted from https://github.com/julientregoat/aiff-rs
+
 use crate::op1::OP1Data;
 use crate::util::*;
 
@@ -57,7 +59,7 @@ pub trait Chunk {
         Self: Sized;
 
     fn write(&self, _file: &mut impl Write) -> Result<usize, io::Error> {
-        //unimplemented!();
+        // unimplemented!(); TODO
         Ok(0)
     }
 }
@@ -75,6 +77,24 @@ pub struct FormChunk {
     pub texts: Vec<TextChunk>,
     pub midi: Vec<MIDIDataChunk>,
     pub app: Vec<ApplicationSpecificChunk>,
+}
+
+impl Default for FormChunk {
+    fn default() -> Self {
+        Self {
+            size: 0,
+            form_type: *AIFF,
+            common: Default::default(),
+            sound: Default::default(),
+            comments: Default::default(),
+            instrument: Default::default(),
+            recording: Default::default(),
+            markers: Default::default(),
+            texts: Default::default(),
+            midi: Default::default(),
+            app: Default::default(),
+        }
+    }
 }
 
 impl Chunk for FormChunk {
@@ -141,7 +161,11 @@ impl Chunk for FormChunk {
         }
 
         let mut common = common.unwrap();
-        common.num_sample_frames = sound.as_ref().map_or(0, |s| s.sample_frames());
+        common.num_sample_frames = sound.as_ref().map_or(0, |s| {
+            s.sound_data.len() as u32
+                / (common.bit_rate / 8).max(1) as u32
+                / common.num_channels as u32
+        });
 
         Ok(FormChunk {
             size,
@@ -213,6 +237,17 @@ pub struct CommonChunk {
     pub sample_rate: [u8; 10], // 80 bit extended floating pt num
 }
 
+impl Default for CommonChunk {
+    fn default() -> Self {
+        Self {
+            num_channels: 1,
+            num_sample_frames: 0,
+            bit_rate: 16,
+            sample_rate: [64, 14, 172, 68, 0, 0, 0, 0, 0, 0], // 44100 Hz
+        }
+    }
+}
+
 impl Chunk for CommonChunk {
     fn parse(buf: Buffer) -> Result<CommonChunk, ChunkError> {
         let (_size, num_channels, num_sample_frames, bit_rate) = (
@@ -249,12 +284,6 @@ pub struct SoundDataChunk {
     pub offset: u32,
     pub block_size: u32,
     pub sound_data: Vec<u8>,
-}
-
-impl SoundDataChunk {
-    fn sample_frames(&self) -> u32 {
-        self.sound_data.len() as u32 / 2
-    }
 }
 
 impl fmt::Debug for SoundDataChunk {
