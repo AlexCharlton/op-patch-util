@@ -132,6 +132,42 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 ),
         ).subcommand(
             SubCommand::with_name("drum")
+                .arg(Arg::with_name("INPUT_FILES")
+                     .index(1)
+                     .max_values(24)
+                     .required(true)
+                     .multiple(true)
+                     .help("Up to 24 WAV files which will map to the 24 keys of the OP. The ordering of the inputs will be based on their name. Any keys that do not have a sample will be silent by default. Total length of the samples may not exceed 12 seconds."))
+                .arg(Arg::with_name("USE_INPUT_ORDERING")
+                     .long("use-input-ordering")
+                     .help("Instead of using the input filenames to determine sample ordering, use the order of the files as passed in the command line."))
+                .arg(Arg::with_name("OCTAVE")
+                     .short("t")
+                     .long("octave")
+                     .value_name("OCTAVE")
+                     .default_value("5")
+                     .help("Which octave to use as the root of the sample. From 1 to 10."))
+                .arg(Arg::with_name("SHIFT")
+                     .short("s")
+                     .long("shift")
+                     .value_name("N")
+                     .default_value("0")
+                     .help("Shift the first sample up by N keys."))
+                .arg(Arg::with_name("COPY_REMAINING")
+                     .short("c")
+                     .long("copy-remaining")
+                     .help("Copy the first and last samples to fill in any missing keys at the start or end."))
+                .arg(Arg::with_name("PITCH_SHIFT_REMAINING")
+                     .short("p")
+                     .long("pitch-shift-remaining")
+                     .help("Pitch shift the first and last samples to fill in any missing keys at the start or end (implies `-c`)."))
+                .arg(
+                    Arg::with_name("OUTPUT_FILE")
+                        .short("o")
+                        .long("output")
+                        .default_value("output.aif")
+                        .help("Use `-` as the final argument value to output to STDOUT."),
+                )
                 .about("Create a drum patch from up to 24 WAV files")
         );
 
@@ -485,10 +521,8 @@ fn synth(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
     let target_len = 44100 * 6 * 2; // Hz * seconds * 2 bytes
     if sound_data.len() > target_len {
         log::warn!("Sample is longer than 6 seconds. Truncating to fit.");
-    } else if sound_data.len() < target_len {
-        log::warn!("Sample is shorter than 6 seconds. Extending with silence.");
+        sound_data.resize(target_len, 0);
     }
-    sound_data.resize(target_len, 0);
 
     let mut form = chunks::FormChunk::default();
     form.common.num_sample_frames = sound_data.len() as u32 / 2;
@@ -516,6 +550,103 @@ fn synth(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
 }
 
 fn drum(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
-    unimplemented!();
-    // Ok(())
+    let shift = value_t_or_exit!(matches.value_of("SHIFT"), usize);
+    let octav = value_t_or_exit!(matches.value_of("OCTAVE"), u8);
+    let copy_remaining = matches.is_present("COPY_REMAINING");
+    let pitch_shift_remaining = matches.is_present("PITCH_SHIFT_REMAINING");
+    let use_input_ordering = matches.is_present("USE_INPUT_ORDERING");
+
+    if octav < 1 || octav > 10 {
+        Err("OCTAVE must be between 1 and 10")?;
+    }
+    let mut input_files: Vec<&str> = matches.values_of("INPUT_FILES").unwrap().collect();
+    let output_file = if let Some(&"-") = input_files.last() {
+        input_files.pop();
+        "-"
+    } else {
+        matches.value_of("OUTPUT_FILE").unwrap()
+    };
+
+    if !use_input_ordering {
+        input_files.sort(); // TODO sort_by?
+    }
+
+    if shift + input_files.len() > 24 {
+        Err("Shift value N plus number of input files must not exceed 24 keys")?;
+    }
+
+    let mut sound_data: Vec<u8> = vec![];
+    let mut starts: [u32; 24] = [0; 24];
+    let mut ends: [u32; 24] = [0; 24];
+    let mut pitches: [i16; 24] = [0; 24];
+    let max_len = 44100 * 12 * 2; // Hz * seconds * 2 bytes
+    let mut i = shift;
+    for input in input_files.iter() {
+        let mut file = File::open(input)?;
+        let (header, data) = wav::read(&mut file)?;
+        log::info!("{}, header: {:#?}", input, header);
+        let data = wav_to_bytes(&header, &data)?;
+        starts[i] = sound_data.len() as u32 * 2029; // Confusing magic number
+        sound_data.extend(&data);
+        ends[i] = sound_data.len() as u32 * 2029;
+        if sound_data.len() > max_len {
+            Err("Samples cannot add up to more than 12 seconds")?;
+        }
+        i += 1;
+    }
+
+    if pitch_shift_remaining || copy_remaining {
+        let last = shift + input_files.len() - 1;
+        for i in 0..shift {
+            starts[i] = starts[shift];
+            ends[i] = ends[shift];
+        }
+        for i in last..24 {
+            starts[i] = starts[last];
+            ends[i] = ends[last];
+        }
+
+        if pitch_shift_remaining {
+            for i in 0..shift {
+                pitches[i] = (shift - i) as i16 * -512;
+            }
+            for i in last..24 {
+                pitches[i] = (i - last) as i16 * 512;
+            }
+        }
+    }
+
+    let mut form = chunks::FormChunk::default();
+    form.common.num_sample_frames = sound_data.len() as u32 / 2;
+    let mut op_data = op1::OP1Data::default_drum();
+    if let op1::OP1Data::Drum {
+        ref mut octave,
+        ref mut start,
+        ref mut end,
+        ref mut pitch,
+        ..
+    } = op_data
+    {
+        *octave = octav - 5;
+        *start = starts;
+        *end = ends;
+        *pitch = pitches;
+    }
+    form.app
+        .push(chunks::ApplicationSpecificChunk::OP1 { data: op_data });
+    form.sound = Some(chunks::SoundDataChunk {
+        size: sound_data.len() as i32 + 8,
+        offset: 0,
+        block_size: 0,
+        sound_data,
+    });
+
+    if output_file == "-" {
+        form.write(&mut io::stdout())?;
+    } else {
+        let mut file = File::create(output_file)?;
+        form.write(&mut file)?;
+    }
+
+    Ok(())
 }
