@@ -4,7 +4,7 @@ A command line tool for creating and modifying patches for the OP-1 and OP-Z.
 ## Installation
 E.g. installing the OSX build to `/usr/local/bin`:
 ```
-curl -s https://github.com/AlexCharlton/op-patch-util/releases/latest/download/op-patch-util-1.0.0-osx.tar.gz | sudo tar -zx -C /usr/local/bin
+curl -Ls https://github.com/AlexCharlton/op-patch-util/releases/latest/download/op-patch-util-1.0.0-osx.tar.gz | sudo tar -zx -C /usr/local/bin
 ```
 
 ### Installing with the Rust toolchain
