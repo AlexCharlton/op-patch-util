@@ -1,9 +1,9 @@
 [package]
 name = "op-patch-util"
-version = "0.1.0"
+version = "1.0.0"
 authors = ["Alex Charlton <alex.n.charlton@gmail.com>"]
 edition = "2018"
-description = "A tool for creating and modifying patches for the OP-1 and OP-Z"
+description = "A command line tool for creating and modifying patches for the OP-1 and OP-Z"
 
 [dependencies]
 log = "0.4"

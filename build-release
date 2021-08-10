@@ -1,0 +1,15 @@
+#!/bin/bash
+
+if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    OS='linux'
+elif [[ "$OSTYPE" == "darwin"* ]]; then
+    OS='osx'
+elif [[ "$OSTYPE" == "cygwin" ]] || [[ "$OSTYPE" == "msys" ]]; then
+     OS='win'
+else
+     OS='unknown'
+fi
+
+cargo build --release
+tar -czf op-patch-util-`tomlq package.version -f Cargo.toml`-${OS}.tar.gz  -C target/release op-patch-util
+echo "Created op-patch-util-`tomlq package.version -f Cargo.toml`-${OS}.tar.gz"
