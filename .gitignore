@@ -1,1 +1,6 @@
 /target
+*.tar.gz
+.DS_Store
+*.aif
+*.json
+*.wav
