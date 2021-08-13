@@ -10,6 +10,13 @@ else
      OS='unknown'
 fi
 
+if [[ "$OS" == "win" ]]; then
+    EXEC_NAME=op-patch-util.exe
+else
+    EXEC_NAME=op-patch-util
+fi
+
+
 cargo build --release
-tar -czf op-patch-util-`tomlq package.version -f Cargo.toml`-${OS}.tar.gz  -C target/release op-patch-util
+tar -czf op-patch-util-`tomlq package.version -f Cargo.toml`-${OS}.tar.gz  -C target/release $EXEC_NAME
 echo "Created op-patch-util-`tomlq package.version -f Cargo.toml`-${OS}.tar.gz"
