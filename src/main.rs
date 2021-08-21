@@ -161,13 +161,15 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                      .short("p")
                      .long("pitch-shift-remaining")
                      .help("Pitch shift the first and last samples to fill in any missing keys at the start or end (implies `-c`)."))
-                .arg(
-                    Arg::with_name("OUTPUT_FILE")
-                        .short("o")
-                        .long("output")
-                        .default_value("output.aif")
-                        .help("Use `-` as the final argument value to output to STDOUT."),
-                )
+                .arg(Arg::with_name("OUTPUT_FILE")
+                     .short("o")
+                     .long("output")
+                     .default_value("output.aif")
+                     .help("Use `-` as the final argument value to output to STDOUT."))
+                .arg(Arg::with_name("LOW_RES")
+                     .short("l")
+                     .long("low-res")
+                     .help("Halve the sample rate, but pitch up the result by an octave. This effectively doubles the total available sample length to 24 seconds, at the expense of a lower-resolution."))
                 .about("Create a drum patch from up to 24 WAV files")
         );
 
@@ -483,7 +485,21 @@ fn drop_channels(data: &[i16], num_channels: usize) -> Vec<i16> {
     r
 }
 
-fn wav_to_bytes(header: &wav::Header, data: &wav::BitDepth) -> Result<Vec<u8>, &'static str> {
+fn halve_bitrate(data: &[i16]) -> Vec<i16> {
+    let mut r = Vec::with_capacity(data.len() / 2);
+    let mut i = 0;
+    while i < data.len() {
+        r.push(data[i]);
+        i += 2;
+    }
+    r
+}
+
+fn wav_to_bytes(
+    header: &wav::Header,
+    data: &wav::BitDepth,
+    low_res: bool,
+) -> Result<Vec<u8>, &'static str> {
     if header.sampling_rate != 44100 {
         Err("Sample must be encoded at 44100 Hz")?;
     }
@@ -495,6 +511,9 @@ fn wav_to_bytes(header: &wav::Header, data: &wav::BitDepth) -> Result<Vec<u8>, &
 
     if header.channel_count != 1 {
         data = drop_channels(&data, header.channel_count as usize);
+    }
+    if low_res {
+        data = halve_bitrate(&data);
     }
 
     Ok(wav_i16_to_bytes(&data))
@@ -517,7 +536,7 @@ fn synth(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
 
     log::info!("WAV header: {:#?}", header);
 
-    let mut sound_data = wav_to_bytes(&header, &data)?;
+    let mut sound_data = wav_to_bytes(&header, &data, false)?;
     let target_len = 44100 * 6 * 2; // Hz * seconds * 2 bytes
     if sound_data.len() > target_len {
         log::warn!("Sample is longer than 6 seconds. Truncating to fit.");
@@ -553,6 +572,7 @@ fn drum(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
     let shift = value_t_or_exit!(matches.value_of("SHIFT"), usize);
     let octav = value_t_or_exit!(matches.value_of("OCTAVE"), u8);
     let copy_remaining = matches.is_present("COPY_REMAINING");
+    let low_res = matches.is_present("LOW_RES");
     let pitch_shift_remaining = matches.is_present("PITCH_SHIFT_REMAINING");
     let use_input_ordering = matches.is_present("USE_INPUT_ORDERING");
 
@@ -578,14 +598,14 @@ fn drum(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
     let mut sound_data: Vec<u8> = vec![];
     let mut starts: [u32; 24] = [0; 24];
     let mut ends: [u32; 24] = [0; 24];
-    let mut pitches: [i16; 24] = [0; 24];
+    let mut pitches: [i16; 24] = [if low_res { 12 * -512 } else { 0 }; 24];
     let max_len = 44100 * 12 * 2; // Hz * seconds * 2 bytes
     let mut i = shift;
     for input in input_files.iter() {
         let mut file = File::open(input)?;
         let (header, data) = wav::read(&mut file)?;
         log::info!("{}, header: {:#?}", input, header);
-        let data = wav_to_bytes(&header, &data)?;
+        let data = wav_to_bytes(&header, &data, low_res)?;
         starts[i] = sound_data.len() as u32 * 2029; // Confusing magic number
         sound_data.extend(&data);
         ends[i] = sound_data.len() as u32 * 2029;
@@ -608,10 +628,10 @@ fn drum(matches: &ArgMatches) -> Result<(), Box<dyn error::Error>> {
 
         if pitch_shift_remaining {
             for i in 0..shift {
-                pitches[i] = (shift - i) as i16 * -512;
+                pitches[i] += (shift - i) as i16 * -512;
             }
             for i in last..24 {
-                pitches[i] = (i - last) as i16 * 512;
+                pitches[i] += (i - last) as i16 * 512;
             }
         }
     }
