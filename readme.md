@@ -65,3 +65,8 @@ This creates a new `output.aif` with an octave value of 1.
 If you think the op-patch-util should do something it doesn't, or if you've found a bug, please file a [Github issue](https://github.com/AlexCharlton/op-patch-util/issues).
 
 Pull requests are welcome.
+
+## Changelog
+
+#### 1.1.0
+- Add `drum --low-res` option to allow for double the total sample length at the expense of halving the bitrate.
