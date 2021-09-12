@@ -61,6 +61,30 @@ $ op-patch-util set  -j new.json input.aif
 ```
 This creates a new `output.aif` with an octave value of 1.
 
+#### Creating multiple patches at once
+##### Unix-like environments (including OS X)
+Create a file called `multi-patch-builder.sh` with the following contents and run `chmod 775 multi-patch-builder.sh`:
+
+```
+#!/bin/bash
+
+CURRENT_DIR=$(pwd -P)
+
+for dir in "$@"
+do
+    cd $CURRENT_DIR/$dir
+    op-patch-util drum *.wav -o $CURRENT_DIR/${dir}-patch.aif
+done
+```
+
+Alter the `op-patch-util` command in any way you desire
+
+Then, given two directories with WAV files - `samples1` and `samples2`- you can run this script like so:
+```
+$ ./multi-patch-builder.sh samples1 samples2
+```
+And you will get two output drum patches, `samples1-patch.aif` and `samples2-patch.aif`.
+
 ## Contributing
 If you think the op-patch-util should do something it doesn't, or if you've found a bug, please file a [Github issue](https://github.com/AlexCharlton/op-patch-util/issues).
 
