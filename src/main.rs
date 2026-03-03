@@ -3,19 +3,19 @@ mod op1;
 mod util;
 
 use chunks::{read_aif, ApplicationSpecificChunk, Chunk};
-use clap::{
-    crate_authors, crate_description, crate_version, value_t_or_exit, values_t_or_exit, App, Arg,
-    ArgMatches, SubCommand,
-};
+use clap::{value_t_or_exit, values_t_or_exit, App, Arg, ArgMatches, SubCommand};
 use std::error;
 use std::fs::{self, File};
 use std::io::{self, StdinLock, StdoutLock};
 
 fn main() -> Result<(), Box<dyn error::Error>> {
+    let version = env!("CARGO_PKG_VERSION");
+    let authors = env!("CARGO_PKG_AUTHORS").replace(", ", "\n");
+    let description = env!("CARGO_PKG_DESCRIPTION");
     let mut app = App::new("OP-1/Z Patch Utility")
-        .version(crate_version!())
-        .author(crate_authors!("\n"))
-        .about(crate_description!())
+        .version(version)
+        .author(authors.as_str())
+        .about(description)
         .arg(
             Arg::with_name("verbosity")
                 .short("v")
